@@ -51,7 +51,7 @@ def get_room_center(room_id: str) -> Tuple[int, int]:
     return (x, y)
 
 
-def render_room(room_id: str, name: str, is_current: bool, level: int = 0) -> str:
+def render_room(room_id: str, name: str, is_current: bool, is_nearby: bool = False, level: int = 0) -> str:
     """
     Render a single room as SVG elements.
 
@@ -59,6 +59,7 @@ def render_room(room_id: str, name: str, is_current: bool, level: int = 0) -> st
         room_id: The room identifier
         name: Display name for the room
         is_current: Whether this is the current room
+        is_nearby: Whether this room is reachable in one action
         level: Vertical level (0 = ground, -1 = below)
 
     Returns:
@@ -67,10 +68,21 @@ def render_room(room_id: str, name: str, is_current: bool, level: int = 0) -> st
     x, y = get_room_center(room_id)
 
     # Colors
-    fill = "#4a9eff" if is_current else "#e8e8e8"
-    stroke = "#2563eb" if is_current else "#666"
-    stroke_width = "3" if is_current else "2"
-    text_color = "#ffffff" if is_current else "#333"
+    if is_current:
+        fill = "#4a9eff"
+        stroke = "#2563eb"
+        stroke_width = "3"
+        text_color = "#ffffff"
+    elif is_nearby:
+        fill = "#a7f3d0"  # Light green for nearby
+        stroke = "#059669"  # Green border
+        stroke_width = "2"
+        text_color = "#064e3b"
+    else:
+        fill = "#e8e8e8"
+        stroke = "#666"
+        stroke_width = "2"
+        text_color = "#333"
 
     # Dashed border for underground rooms
     stroke_dash = "5,3" if level < 0 else ""
@@ -84,13 +96,23 @@ def render_room(room_id: str, name: str, is_current: bool, level: int = 0) -> st
     rect_x = x - ROOM_WIDTH // 2
     rect_y = y - ROOM_HEIGHT // 2
 
-    return f'''  <rect x="{rect_x}" y="{rect_y}" width="{ROOM_WIDTH}" height="{ROOM_HEIGHT}"
+    elements = []
+
+    # Add glow effect for nearby rooms
+    if is_nearby:
+        elements.append(f'''  <rect x="{rect_x - 3}" y="{rect_y - 3}" width="{ROOM_WIDTH + 6}" height="{ROOM_HEIGHT + 6}"
+        rx="10" fill="none" stroke="#10b981" stroke-width="2" opacity="0.5"/>''')
+
+    elements.append(f'''  <rect x="{rect_x}" y="{rect_y}" width="{ROOM_WIDTH}" height="{ROOM_HEIGHT}"
         rx="8" fill="{fill}" stroke="{stroke}" stroke-width="{stroke_width}"{dash_attr}/>
   <text x="{x}" y="{y + 5}" text-anchor="middle" font-family="Arial, sans-serif"
-        font-size="11" fill="{text_color}" font-weight="{'bold' if is_current else 'normal'}">{display_name}</text>'''
+        font-size="11" fill="{text_color}" font-weight="{'bold' if is_current else 'normal'}">{display_name}</text>''')
+
+    return "\n".join(elements)
 
 
-def render_connection(from_room: str, to_room: str, direction: str) -> str:
+def render_connection(from_room: str, to_room: str, direction: str, 
+                      is_accessible: bool = False, direction_label: str = "") -> str:
     """
     Render a connection line between two rooms.
 
@@ -98,6 +120,8 @@ def render_connection(from_room: str, to_room: str, direction: str) -> str:
         from_room: Source room ID
         to_room: Destination room ID
         direction: Direction of exit (north, south, up, down, etc.)
+        is_accessible: Whether this connection leads to a nearby/accessible room
+        direction_label: Direction label to show (e.g., "N", "E") for accessible connections
 
     Returns:
         SVG line element string
@@ -132,8 +156,38 @@ def render_connection(from_room: str, to_room: str, direction: str) -> str:
     # Use dashed line for vertical connections
     is_vertical = direction in ("up", "down")
     dash = ' stroke-dasharray="4,2"' if is_vertical else ""
+    
+    # Use green color for accessible connections
+    stroke_color = "#10b981" if is_accessible else "#888"
+    stroke_width = "3" if is_accessible else "2"
 
-    return f'  <line x1="{from_x}" y1="{from_y}" x2="{to_x}" y2="{to_y}" stroke="#888" stroke-width="2"{dash}/>'
+    elements = [f'  <line x1="{from_x}" y1="{from_y}" x2="{to_x}" y2="{to_y}" stroke="{stroke_color}" stroke-width="{stroke_width}"{dash}/>']
+    
+    # Add direction label for accessible connections
+    if is_accessible and direction_label:
+        # Position label at midpoint of line
+        mid_x = (from_x + to_x) // 2
+        mid_y = (from_y + to_y) // 2
+        
+        # Offset label to not overlap line
+        label_offset_x = 0
+        label_offset_y = 0
+        if direction in ("north", "south"):
+            label_offset_x = 12
+        elif direction in ("east", "west"):
+            label_offset_y = -8
+        elif direction == "up":
+            label_offset_x = 15
+        elif direction == "down":
+            label_offset_x = 15
+            
+        elements.append(
+            f'  <text x="{mid_x + label_offset_x}" y="{mid_y + label_offset_y}" '
+            f'text-anchor="middle" font-family="Arial, sans-serif" '
+            f'font-size="10" font-weight="bold" fill="#059669">{direction_label}</text>'
+        )
+
+    return "\n".join(elements)
 
 
 def render_vertical_indicator(room_id: str, has_up: bool, has_down: bool) -> str:
@@ -181,7 +235,9 @@ def render_map_svg(rooms: Dict[str, dict], current_room: str) -> str:
     Creates a top-down view of the map with:
     - Rooms as rounded rectangles with labels
     - Current room highlighted in blue
-    - Connection lines between rooms
+    - Nearby rooms (reachable in one action) highlighted in green
+    - Connection lines between rooms (green for accessible exits)
+    - Direction labels on accessible connections
     - Vertical level indicators for stairs/ladders
 
     Args:
@@ -197,6 +253,21 @@ def render_map_svg(rooms: Dict[str, dict], current_room: str) -> str:
 
     width = PADDING * 2 + max_x * CELL_SIZE
     height = PADDING * 2 + max_y * CELL_SIZE
+
+    # Get nearby rooms (exits from current room)
+    current_room_data = rooms.get(current_room, {})
+    current_exits = current_room_data.get("exits", {})
+    nearby_rooms = set(current_exits.values())
+
+    # Direction abbreviations for labels
+    direction_abbrevs = {
+        "north": "N",
+        "south": "S",
+        "east": "E",
+        "west": "W",
+        "up": "↑",
+        "down": "↓",
+    }
 
     svg_parts = [
         f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">',
@@ -225,7 +296,15 @@ def render_map_svg(rooms: Dict[str, dict], current_room: str) -> str:
                 continue
             drawn_connections.add(conn_key)
 
-            svg_parts.append(render_connection(room_id, target_room, direction))
+            # Check if this is an accessible connection from current room
+            is_accessible = room_id == current_room and target_room in nearby_rooms
+            direction_label = direction_abbrevs.get(direction, "") if is_accessible else ""
+
+            svg_parts.append(render_connection(
+                room_id, target_room, direction, 
+                is_accessible=is_accessible, 
+                direction_label=direction_label
+            ))
 
     svg_parts.append('')
     svg_parts.append('  <!-- Rooms -->')
@@ -237,7 +316,8 @@ def render_map_svg(rooms: Dict[str, dict], current_room: str) -> str:
 
         level = ROOM_POSITIONS[room_id][2]
         is_current = room_id == current_room
-        svg_parts.append(render_room(room_id, room_id, is_current, level))
+        is_nearby = room_id in nearby_rooms and not is_current
+        svg_parts.append(render_room(room_id, room_id, is_current, is_nearby, level))
 
         # Add vertical indicators
         exits = room_data.get("exits", {})
@@ -250,7 +330,12 @@ def render_map_svg(rooms: Dict[str, dict], current_room: str) -> str:
     svg_parts.append('')
     svg_parts.append('  <!-- Legend -->')
     svg_parts.append(f'  <text x="10" y="{height - 10}" font-family="Arial, sans-serif" '
-                     f'font-size="10" fill="#666">Current location: {current_room.replace("_", " ").title()}</text>')
+                     f'font-size="10" fill="#666">Current: {current_room.replace("_", " ").title()}</text>')
+    
+    # Add legend for nearby rooms
+    svg_parts.append(f'  <rect x="10" y="{height - 35}" width="12" height="12" rx="2" fill="#a7f3d0" stroke="#059669"/>')
+    svg_parts.append(f'  <text x="26" y="{height - 25}" font-family="Arial, sans-serif" '
+                     f'font-size="10" fill="#666">= Nearby (one move)</text>')
 
     svg_parts.append('</svg>')
 
