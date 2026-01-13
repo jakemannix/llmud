@@ -1,0 +1,30 @@
+{
+  "wolf": {
+    "type": "Wolf",
+    "description": "Grey timber wolves, unusually bold this season. Hunt in packs of 3-6.",
+    "stats": {"hp": 11, "armor": 1, "attack": "1d6+2"},
+    "weaknesses": ["fire", "loud noises"],
+    "abilities": ["pack tactics (advantage when ally adjacent)", "keen senses"]
+  },
+  "goblin": {
+    "type": "Goblin",
+    "description": "Small, cunning, cowardly alone but dangerous in groups. Fond of ambushes.",
+    "stats": {"hp": 7, "armor": 1, "attack": "1d6"},
+    "weaknesses": ["sunlight (disadvantage)", "easily frightened when outnumbered"],
+    "abilities": ["darkvision", "nimble escape"]
+  },
+  "skeleton": {
+    "type": "Skeleton",
+    "description": "Animated bones of the long dead. Mindless but relentless.",
+    "stats": {"hp": 13, "armor": 2, "attack": "1d8"},
+    "weaknesses": ["bludgeoning damage (double)", "holy water"],
+    "abilities": ["undead (immune to poison, fear)", "doesn't tire"]
+  },
+  "giant_spider": {
+    "type": "Giant Spider",
+    "description": "Dog-sized spiders that lurk in dark places. Spin webs to trap prey.",
+    "stats": {"hp": 8, "armor": 0, "attack": "1d4 + poison"},
+    "weaknesses": ["fire (webs burn)", "slow in cold"],
+    "abilities": ["web (restrain target)", "wall climbing", "poison (1d6, DC 10 CON)"]
+  }
+}

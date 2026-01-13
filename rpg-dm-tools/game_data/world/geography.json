@@ -1,0 +1,22 @@
+{
+  "willowdale_village": {
+    "description": "A small farming village nestled in a valley, known for its annual harvest festival",
+    "notable_features": ["ancient oak in town square", "stone bridge over creek", "windmill on eastern hill"],
+    "connections": ["darkwood_forest", "mountain_pass", "river_bend"]
+  },
+  "darkwood_forest": {
+    "description": "A dense forest where sunlight barely penetrates the canopy. Locals avoid it after dark.",
+    "notable_features": ["old druid stones", "abandoned hunter's cabin", "wolf territory"],
+    "connections": ["willowdale_village", "mountain_pass"]
+  },
+  "mountain_pass": {
+    "description": "A treacherous path through the Ironspine Mountains, the only route to the northern territories",
+    "notable_features": ["ancient watchtower", "echoing caves", "precarious rope bridge"],
+    "connections": ["willowdale_village", "darkwood_forest"]
+  },
+  "river_bend": {
+    "description": "Where the Silverrun River curves sharply, creating calm pools popular with fishermen",
+    "notable_features": ["old mill", "fishing dock", "swimming hole"],
+    "connections": ["willowdale_village"]
+  }
+}

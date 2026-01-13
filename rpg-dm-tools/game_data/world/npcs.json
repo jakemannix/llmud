@@ -1,0 +1,37 @@
+{
+  "marta_innkeeper": {
+    "name": "Marta",
+    "role": "Innkeeper of the Stumbling Pig tavern",
+    "description": "A stout woman in her 50s with flour-dusted apron and knowing eyes",
+    "personality": "Warm but shrewd. Knows everyone's business. Protective of regulars.",
+    "knows_about": ["village gossip", "mysterious_merchant", "cellar_noises"]
+  },
+  "tobias_blacksmith": {
+    "name": "Tobias",
+    "role": "Village blacksmith",
+    "description": "Massive arms, burn scars, speaks few words. His hammer rings from dawn to dusk.",
+    "personality": "Gruff, honorable, secretly crafts toys for village children",
+    "knows_about": ["weapons", "old_war_stories", "wolf_attacks"]
+  },
+  "elder_morris": {
+    "name": "Elder Morris",
+    "role": "Village elder and record keeper",
+    "description": "Bent with age, walks with a gnarled oak staff, memory sharp as a blade",
+    "personality": "Patient, fond of long stories, worries about the village's future",
+    "knows_about": ["village_history", "old_legends", "mysterious_merchant"]
+  },
+  "sera_stranger": {
+    "name": "Sera",
+    "role": "Mysterious traveler staying at the inn",
+    "description": "Cloaked figure, keeps to shadows, pays in foreign coin",
+    "personality": "Evasive, observant, seems to be waiting for something",
+    "knows_about": ["mountain_pass", "northern_territories", "unknown_secrets"]
+  },
+  "captain_aldric": {
+    "name": "Captain Aldric",
+    "role": "Captain of the village guard (all 4 of them)",
+    "description": "Former soldier, limp in left leg, still wears his old legion insignia",
+    "personality": "By-the-book, haunted by past battles, takes duty seriously",
+    "knows_about": ["wolf_attacks", "village_defenses", "old_war_stories"]
+  }
+}

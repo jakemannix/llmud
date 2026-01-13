@@ -1,0 +1,37 @@
+{
+  "starting_room": "tavern",
+  "rooms": {
+    "tavern": {
+      "description": "The Stumbling Pig tavern. Warm firelight, smell of stew, murmur of conversation.",
+      "exits": {"north": "street", "down": "cellar"}
+    },
+    "cellar": {
+      "description": "Dusty wine cellar. Barrels line the walls. A cold draft comes from somewhere.",
+      "exits": {"up": "tavern"}
+    },
+    "street": {
+      "description": "The main village street. Cobblestones worn smooth by generations of feet.",
+      "exits": {"south": "tavern", "north": "village_gate", "east": "market", "west": "temple"}
+    },
+    "market": {
+      "description": "The market square. Empty stalls wait for the weekly market day.",
+      "exits": {"west": "street", "north": "blacksmith"}
+    },
+    "blacksmith": {
+      "description": "Tobias's forge. The heat hits you like a wall. Metal rings on metal.",
+      "exits": {"south": "market"}
+    },
+    "temple": {
+      "description": "A small stone temple to the harvest goddess. Candles flicker within.",
+      "exits": {"east": "street"}
+    },
+    "village_gate": {
+      "description": "The north gate. A wooden palisade with a guard tower. Beyond lies the road.",
+      "exits": {"south": "street", "north": "forest_path"}
+    },
+    "forest_path": {
+      "description": "A dirt path into Darkwood Forest. The trees grow thick and dark ahead.",
+      "exits": {"south": "village_gate"}
+    }
+  }
+}

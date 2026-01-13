@@ -1,0 +1,23 @@
+{
+  "missing_merchant": {
+    "id": "missing_merchant",
+    "title": "The Missing Merchant",
+    "hook": "A trade merchant's wagon was found abandoned on the forest road. No bodies, no goods, just claw marks on the wood.",
+    "details": "Bertram the merchant was carrying a shipment of silver candlesticks for the temple. The wolf attacks might not be natural wolves at all. Elder Morris remembers similar disappearances 40 years ago.",
+    "rewards": ["50 gold from merchant guild", "favor with temple", "clue about larger threat"]
+  },
+  "cellar_noises": {
+    "id": "cellar_noises",
+    "title": "Things Below",
+    "hook": "Marta hears scratching from her tavern's cellar at night. Her cat won't go near the cellar door anymore.",
+    "details": "The tavern was built on older foundations. The scratching started after last month's heavy rains collapsed part of the cellar wall, revealing a passage. Marta hasn't told anyone - bad for business.",
+    "rewards": ["free room and board", "whatever's down there", "Marta's loyalty"]
+  },
+  "wolf_attacks": {
+    "id": "wolf_attacks",
+    "title": "The Bold Hunt",
+    "hook": "Wolves killed three sheep last night - inside a locked barn. Captain Aldric is organizing a hunt but needs capable volunteers.",
+    "details": "These aren't normal wolf tactics. Tobias found a strange iron collar near the barn, too small for any dog. Someone or something may be controlling the pack.",
+    "rewards": ["20 gold bounty per wolf", "village reputation", "the iron collar (magical?)"]
+  }
+}
