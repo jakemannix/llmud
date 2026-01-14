@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Memory: Stateful Agents and Learning Over Time</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.5.0/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.5.0/dist/theme/black.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+    <style>
+        :root {
+            --r-heading-color: #c9a227;
+            --r-link-color: #6eb5ff;
+        }
+        .reveal h1, .reveal h2, .reveal h3 { color: var(--r-heading-color); }
+        .reveal pre { font-size: 0.55em; }
+        .reveal code { font-family: 'Fira Code', monospace; }
+        .reveal .small-code pre { font-size: 0.45em; }
+        .reveal .tiny-code pre { font-size: 0.38em; }
+        .reveal table { font-size: 0.7em; }
+        .reveal .highlight { color: #ffcc00; font-weight: bold; }
+        .reveal .dim { opacity: 0.6; }
+        .reveal .two-col { display: flex; gap: 2em; }
+        .reveal .two-col > * { flex: 1; }
+        .reveal blockquote {
+            background: rgba(255,255,255,0.1);
+            padding: 1em;
+            border-left: 4px solid var(--r-heading-color);
+        }
+    </style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Title -->
+<section>
+    <h1>Agentic Memory</h1>
+    <h3>Stateful Agents and Learning Over Time</h3>
+    <p style="margin-top: 2em; opacity: 0.7;">
+        Building on your MCP tools homework
+    </p>
+</section>
+
+<!-- Part 1: The Problem -->
+<section>
+    <section>
+        <h2>Part 1: The Problem</h2>
+        <p>Let's see what happens when we play llmud...</p>
+    </section>
+
+    <section>
+        <h3>Demo: Playing llmud</h3>
+        <pre><code class="language-bash"># Start the game, play a few turns
+> [IC] I search the cellar for hidden items
+
+The GM narrates finding a mysterious letter...
+You discover an old letter hidden behind a barrel.
+The wax seal bears an unfamiliar crest...
+
+> [IC] I read the letter carefully
+
+The letter speaks of a hidden treasure...
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Demo: The Forgetting</h3>
+        <pre><code class="language-bash"># Close the session, reopen, continue playing
+
+> [IC] What did that letter say again?
+
+"I'm not sure what letter you're referring to.
+Could you describe what letter you mean?"
+</code></pre>
+        <p class="fragment" style="color: #ff6b6b; font-size: 1.2em; margin-top: 1em;">
+            The GM has no memory of the story.
+        </p>
+    </section>
+
+    <section>
+        <h3>Your MCP Server Has State</h3>
+        <pre><code class="language-python"># Character sheet persists (it's a file!)
+character = read_character_sheet("hero")
+# → {"name": "Aldric", "hp": 45, "inventory": [...]}
+
+# Room position persists
+get_current_map("hero")
+# → {"current_room": "cellar", ...}
+</code></pre>
+        <p class="fragment">But the <span class="highlight">agent's conversation</span> doesn't persist.</p>
+    </section>
+
+    <section>
+        <h3>Look at the Current Code</h3>
+        <pre><code class="language-python"># web_client/agent.py
+
+class GameAgent:
+    def __init__(self, tools, provider=None, model_name=None):
+        self.agent = create_react_agent(
+            model=self.model,
+            tools=tools,
+            prompt=SYSTEM_PROMPT,
+        )
+
+        # This is the problem:
+        self.message_history: list[BaseMessage] = []
+</code></pre>
+        <p class="fragment">In-memory list. Gone when the process ends.</p>
+    </section>
+</section>
+
+<!-- Part 2: The Core Tension -->
+<section>
+    <section>
+        <h2>Part 2: The Core Tension</h2>
+    </section>
+
+    <section>
+        <h3>The Context Window is Working Memory</h3>
+        <pre><code class="language-plaintext">┌─────────────────────────────────────────┐
+│         Context Window (128k tokens)    │
+│  ┌───────────────────────────────────┐  │
+│  │ System prompt          (~2k)      │  │
+│  │ Tool definitions       (~3k)      │  │
+│  │ Conversation history   (~???k)    │  │  ← Grows without bound
+│  │ Current user message   (~0.5k)    │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+</code></pre>
+    </section>
+
+    <section>
+        <h3>The Math Doesn't Work</h3>
+        <ul>
+            <li>A 4-hour D&D session: <span class="highlight">50k+ tokens</span> of dialogue</li>
+            <li class="fragment">Multiple sessions over weeks: <span class="highlight">hundreds of thousands</span></li>
+            <li class="fragment">Context window: fixed at 128k (or less)</li>
+        </ul>
+        <p class="fragment" style="margin-top: 1em;">Something has to give.</p>
+    </section>
+
+    <section>
+        <h3>Types of Memory</h3>
+        <p style="font-size: 0.8em; opacity: 0.7;">Borrowing from cognitive science:</p>
+        <ul>
+            <li><strong>Working memory</strong> — the context window itself</li>
+            <li class="fragment"><strong>Episodic memory</strong> — specific events<br>
+                <span class="dim">"Last session, the player found a key in the cellar"</span></li>
+            <li class="fragment"><strong>Semantic memory</strong> — extracted facts<br>
+                <span class="dim">"The player is afraid of spiders"</span></li>
+            <li class="fragment"><strong>Procedural memory</strong> — learned behaviors<br>
+                <span class="dim">"This player prefers detailed descriptions"</span></li>
+        </ul>
+    </section>
+
+    <section>
+        <h3>Five Strategies We'll Cover</h3>
+        <ol>
+            <li>Sliding Window</li>
+            <li>Summarization</li>
+            <li>RAG over Memories</li>
+            <li>Structured Extraction (Knowledge Graphs)</li>
+            <li>Let the LLM Manage It (MemGPT/Letta)</li>
+        </ol>
+    </section>
+</section>
+
+<!-- Part 3: Sliding Window + SQLite -->
+<section>
+    <section>
+        <h2>Strategy 1: Sliding Window</h2>
+        <p>The simplest approach (with persistence)</p>
+    </section>
+
+    <section>
+        <h3>First: We Need Persistence</h3>
+        <p>Even the simplest strategy needs to <span class="highlight">survive restarts</span>.</p>
+        <pre><code class="language-python"># Before: in-memory (useless)
+self.message_history: list[BaseMessage] = []
+
+# After: stored in SQLite
+self.db = sqlite3.connect("game_memory.db")
+</code></pre>
+    </section>
+
+    <section>
+        <h3>SQLite Message Store</h3>
+        <pre class="small-code"><code class="language-python">import sqlite3
+import json
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+
+class MessageStore:
+    def __init__(self, db_path: str = "game_memory.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+        """)
+        self.conn.commit()
+
+    def add(self, session_id: str, message: BaseMessage):
+        role = "human" if isinstance(message, HumanMessage) else "ai"
+        self.conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            (session_id, role, message.content, time.time())
+        )
+        self.conn.commit()
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Retrieving Messages</h3>
+        <pre class="small-code"><code class="language-python">def get_messages(self, session_id: str) -> list[BaseMessage]:
+    """Get all messages for a session."""
+    cursor = self.conn.execute(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
+        (session_id,)
+    )
+    messages = []
+    for role, content in cursor:
+        if role == "human":
+            messages.append(HumanMessage(content=content))
+        else:
+            messages.append(AIMessage(content=content))
+    return messages
+</code></pre>
+        <p class="fragment">Now messages survive restarts!</p>
+    </section>
+
+    <section>
+        <h3>The Sliding Window</h3>
+        <pre><code class="language-python">def get_recent_messages(
+    self, session_id: str, max_messages: int = 20
+) -> list[BaseMessage]:
+    """Get only the N most recent messages."""
+    cursor = self.conn.execute(
+        """SELECT role, content FROM messages
+           WHERE session_id = ?
+           ORDER BY id DESC LIMIT ?""",
+        (session_id, max_messages)
+    )
+    messages = []
+    for role, content in cursor:
+        msg = HumanMessage(content=content) if role == "human" \
+              else AIMessage(content=content)
+        messages.append(msg)
+
+    return list(reversed(messages))  # Oldest first
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Updated GameAgent</h3>
+        <pre class="small-code"><code class="language-python">class GameAgent:
+    def __init__(self, tools, session_id: str = "default"):
+        self.session_id = session_id
+        self.message_store = MessageStore()
+        self.agent = create_react_agent(...)
+
+    async def chat(self, message: str, mode: str = "ic") -> ChatResult:
+        # Load recent history from DB
+        history = self.message_store.get_recent_messages(
+            self.session_id, max_messages=20
+        )
+
+        user_msg = HumanMessage(content=f"[{mode.upper()}] {message}")
+        self.message_store.add(self.session_id, user_msg)
+
+        response = await self.agent.ainvoke({"messages": history + [user_msg]})
+
+        # Save response
+        ai_msg = response["messages"][-1]
+        self.message_store.add(self.session_id, ai_msg)
+
+        return ChatResult(response=ai_msg.content)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Sliding Window: The Tradeoff</h3>
+        <div class="two-col">
+            <div>
+                <h4 style="color: #4ecdc4;">Pros</h4>
+                <ul>
+                    <li>Dead simple</li>
+                    <li>Fixed memory cost</li>
+                    <li>Fast retrieval</li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ff6b6b;">Cons</h4>
+                <ul>
+                    <li>Loses everything old</li>
+                    <li>No selective recall</li>
+                    <li>Player's name? Gone.</li>
+                </ul>
+            </div>
+        </div>
+        <p class="fragment" style="margin-top: 1em;">
+            <strong>Good for:</strong> Short, stateless interactions. Customer service bots.
+        </p>
+    </section>
+</section>
+
+<!-- Part 4: Summarization -->
+<section>
+    <section>
+        <h2>Strategy 2: Summarization</h2>
+        <p>Compress old messages into summaries</p>
+    </section>
+
+    <section>
+        <h3>The Idea</h3>
+        <pre><code class="language-plaintext">Messages 1-50:   [full text, full text, full text, ...]
+                           ↓ LLM summarizes
+Summary:         "Player explored tavern, found key, met Marta..."
+
+Messages 51-70:  [full text, full text, ...]  ← kept verbatim
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Implementation</h3>
+        <pre class="small-code"><code class="language-python">async def summarize_old_messages(
+    self,
+    session_id: str,
+    keep_recent: int = 10
+) -> str:
+    """Summarize old messages, keep recent ones verbatim."""
+    all_messages = self.message_store.get_messages(session_id)
+
+    if len(all_messages) <= keep_recent:
+        return None  # Nothing to summarize
+
+    old_messages = all_messages[:-keep_recent]
+
+    # Ask LLM to summarize
+    summary_prompt = f"""Summarize this conversation, preserving:
+- Key events and discoveries
+- Important NPC interactions
+- Player decisions and their consequences
+- Any ongoing quests or goals
+
+Conversation:
+{format_messages(old_messages)}"""
+
+    summary = await self.model.ainvoke([HumanMessage(content=summary_prompt)])
+    return summary.content
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Storing Summaries</h3>
+        <pre class="small-code"><code class="language-python"># Add a summaries table
+self.conn.execute("""
+    CREATE TABLE IF NOT EXISTS summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        messages_summarized INTEGER NOT NULL,
+        created_at REAL NOT NULL
+    )
+""")
+
+def save_summary(self, session_id: str, summary: str, msg_count: int):
+    self.conn.execute(
+        """INSERT INTO summaries
+           (session_id, content, messages_summarized, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (session_id, summary, msg_count, time.time())
+    )
+    # Optionally: delete the old messages to save space
+    self.conn.commit()
+</code></pre>
+    </section>
+
+    <section>
+        <h3>When to Trigger Summarization?</h3>
+        <pre><code class="language-python"># Option A: Token count threshold
+def should_summarize(messages: list[BaseMessage]) -> bool:
+    token_count = sum(count_tokens(m.content) for m in messages)
+    return token_count > 50000
+
+# Option B: Message count threshold
+def should_summarize(messages: list[BaseMessage]) -> bool:
+    return len(messages) > 50
+
+# Option C: Every N turns
+def should_summarize(turn_count: int) -> bool:
+    return turn_count % 20 == 0
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Building Context with Summaries</h3>
+        <pre class="small-code"><code class="language-python">def build_context(self, session_id: str) -> list[BaseMessage]:
+    """Build context from summaries + recent messages."""
+    # Get all summaries
+    summaries = self.get_summaries(session_id)
+
+    # Get recent messages (not yet summarized)
+    recent = self.get_recent_messages(session_id, max_messages=20)
+
+    context = []
+
+    if summaries:
+        summary_text = "\n\n".join(s["content"] for s in summaries)
+        context.append(SystemMessage(
+            content=f"## Previous Session Summary\n{summary_text}"
+        ))
+
+    context.extend(recent)
+    return context
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Summarization: The Tradeoff</h3>
+        <div class="two-col">
+            <div>
+                <h4 style="color: #4ecdc4;">Pros</h4>
+                <ul>
+                    <li>Preserves the gist</li>
+                    <li>Bounded memory</li>
+                    <li>Simple to implement</li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ff6b6b;">Cons</h4>
+                <ul>
+                    <li>Details disappear</li>
+                    <li>LLM might hallucinate</li>
+                    <li>Can't recall specifics</li>
+                </ul>
+            </div>
+        </div>
+        <p class="fragment" style="margin-top: 1em;">
+            <strong>Good for:</strong> Maintaining narrative continuity without perfect recall.
+        </p>
+    </section>
+</section>
+
+<!-- Part 5: Embeddings Intro -->
+<section>
+    <section>
+        <h2>Detour: What Are Embeddings?</h2>
+        <p>Before RAG, we need this concept</p>
+    </section>
+
+    <section>
+        <h3>The Problem: Finding Similar Text</h3>
+        <pre><code class="language-python"># These mean the same thing:
+text1 = "The player found a rusty key in the cellar"
+text2 = "Down in the basement, the adventurer discovered an old iron key"
+
+# String matching?
+shared_words = set(text1.split()) & set(text2.split())
+# → {"the", "in"}  # Useless!
+</code></pre>
+        <p class="fragment">String matching doesn't capture <span class="highlight">meaning</span>.</p>
+    </section>
+
+    <section>
+        <h3>The Idea: Text → Numbers</h3>
+        <p>Convert text to a <span class="highlight">vector</span> (list of numbers)</p>
+        <p>where <strong>similar meanings = nearby vectors</strong></p>
+        <pre class="fragment"><code class="language-python">from openai import OpenAI
+client = OpenAI()
+
+def embed(text: str) -> list[float]:
+    """Convert text to a 1536-dimensional vector."""
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return response.data[0].embedding
+    # → [0.023, -0.041, 0.019, ... 1536 numbers ...]
+</code></pre>
+    </section>
+
+    <section>
+        <h3>The Magic</h3>
+        <p>These models are trained on billions of text pairs:</p>
+        <pre><code class="language-python">v1 = embed("The player found a rusty key")
+v2 = embed("The adventurer discovered an old key")
+v3 = embed("The weather is nice today")
+
+cosine_similarity(v1, v2)  # → 0.89 (high! similar meaning)
+cosine_similarity(v1, v3)  # → 0.12 (low, unrelated)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Cosine Similarity</h3>
+        <p>Measures the angle between two vectors:</p>
+        <pre><code class="language-python">import numpy as np
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """
+    1.0  = identical direction (same meaning)
+    0.0  = orthogonal (unrelated)
+    -1.0 = opposite direction (opposite meaning)
+    """
+    a, b = np.array(a), np.array(b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Visualizing Embeddings</h3>
+        <img src="https://miro.medium.com/v2/resize:fit:1400/1*sAJdxEsDjsPMioHyzlN3_A.png"
+             alt="Embedding space visualization"
+             style="max-height: 400px; background: white; padding: 1em;">
+        <p style="font-size: 0.7em; opacity: 0.7;">Similar concepts cluster together in the vector space</p>
+    </section>
+
+    <section>
+        <h3>Key Takeaway</h3>
+        <blockquote>
+            You don't need to understand the model internals.<br><br>
+            Just know: <strong>text → vector → similar text has similar vectors</strong>
+        </blockquote>
+    </section>
+</section>
+
+<!-- Part 6: RAG over Memories -->
+<section>
+    <section>
+        <h2>Strategy 3: RAG over Memories</h2>
+        <p>Retrieval-Augmented Generation</p>
+    </section>
+
+    <section>
+        <h3>The Core Idea</h3>
+        <p>Instead of keeping all history in context:</p>
+        <ol>
+            <li><strong>Store</strong> memories with their embeddings</li>
+            <li><strong>Search</strong> for relevant memories when needed</li>
+            <li><strong>Inject</strong> only what's relevant into context</li>
+        </ol>
+    </section>
+
+    <section>
+        <h3>In-Memory Version (Conceptual)</h3>
+        <pre class="small-code"><code class="language-python">class SimpleMemoryStore:
+    def __init__(self):
+        self.memories = []  # List of (text, embedding)
+
+    def add(self, text: str):
+        embedding = embed(text)
+        self.memories.append({"text": text, "embedding": embedding})
+
+    def search(self, query: str, top_k: int = 5) -> list[str]:
+        query_embedding = embed(query)
+
+        scored = []
+        for memory in self.memories:
+            score = cosine_similarity(query_embedding, memory["embedding"])
+            scored.append((score, memory["text"]))
+
+        scored.sort(reverse=True, key=lambda x: x[0])
+        return [text for score, text in scored[:top_k]]
+</code></pre>
+    </section>
+
+    <section>
+        <h3>But We Need Persistence!</h3>
+        <p>Enter <span class="highlight">sqlite-vec</span>: SQLite extension for vector search</p>
+        <pre><code class="language-bash">pip install sqlite-vec</code></pre>
+    </section>
+
+    <section>
+        <h3>SQLite-Vec Setup</h3>
+        <pre class="small-code"><code class="language-python">import sqlite3
+import sqlite_vec
+
+def create_memory_db(db_path: str = "memories.db"):
+    conn = sqlite3.connect(db_path)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+
+    # Create virtual table for vector search
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors
+        USING vec0(
+            embedding float[1536]
+        )
+    """)
+
+    # Create regular table for metadata
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp REAL NOT NULL
+        )
+    """)
+    return conn
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Adding Memories</h3>
+        <pre class="small-code"><code class="language-python">class VectorMemoryStore:
+    def __init__(self, db_path: str = "memories.db"):
+        self.conn = create_memory_db(db_path)
+        self.embedder = OpenAI()
+
+    def add(self, session_id: str, content: str):
+        # Get embedding
+        response = self.embedder.embeddings.create(
+            model="text-embedding-3-small",
+            input=content
+        )
+        embedding = response.data[0].embedding
+
+        # Insert into both tables
+        cursor = self.conn.execute(
+            "INSERT INTO memories (session_id, content, timestamp) VALUES (?, ?, ?)",
+            (session_id, content, time.time())
+        )
+        row_id = cursor.lastrowid
+
+        self.conn.execute(
+            "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
+            (row_id, serialize_float32(embedding))
+        )
+        self.conn.commit()
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Searching Memories</h3>
+        <pre class="small-code"><code class="language-python">def search(self, query: str, session_id: str, top_k: int = 5) -> list[str]:
+    # Embed the query
+    response = self.embedder.embeddings.create(
+        model="text-embedding-3-small",
+        input=query
+    )
+    query_embedding = response.data[0].embedding
+
+    # Vector similarity search
+    results = self.conn.execute("""
+        SELECT m.content, v.distance
+        FROM memory_vectors v
+        JOIN memories m ON m.id = v.rowid
+        WHERE m.session_id = ?
+        ORDER BY v.embedding <-> ?
+        LIMIT ?
+    """, (session_id, serialize_float32(query_embedding), top_k)).fetchall()
+
+    return [content for content, distance in results]
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Using RAG in the Agent</h3>
+        <pre class="small-code"><code class="language-python">class GameAgentWithRAG:
+    def __init__(self, tools, session_id: str):
+        self.memory_store = VectorMemoryStore()
+        self.session_id = session_id
+        # ... rest of init
+
+    async def chat(self, message: str, mode: str = "ic") -> ChatResult:
+        # 1. Retrieve relevant memories
+        relevant = self.memory_store.search(message, self.session_id, top_k=5)
+
+        # 2. Build context with retrieved memories
+        memory_context = "\n".join(f"- {m}" for m in relevant)
+        enhanced_prompt = f"""
+## Relevant memories from previous sessions:
+{memory_context}
+
+## Current conversation:
+"""
+
+        # 3. Run agent with enhanced context
+        response = await self.agent.ainvoke(...)
+
+        # 4. Store this exchange as new memories
+        self.memory_store.add(self.session_id, f"Player: {message}")
+        self.memory_store.add(self.session_id, f"GM: {response}")
+
+        return response
+</code></pre>
+    </section>
+
+    <section>
+        <h3>What to Store as Memories?</h3>
+        <pre><code class="language-python"># Option A: Every message
+memory_store.add(session_id, f"Player: {message}")
+
+# Option B: Summaries of chunks
+if len(recent_messages) >= 10:
+    summary = await summarize(recent_messages)
+    memory_store.add(session_id, summary)
+
+# Option C: Only "important" things (LLM decides)
+importance = await llm.ainvoke(f"Rate importance 1-10: {message}")
+if int(importance) >= 7:
+    memory_store.add(session_id, message)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>RAG: The Tradeoff</h3>
+        <div class="two-col">
+            <div>
+                <h4 style="color: #4ecdc4;">Pros</h4>
+                <ul>
+                    <li>Selective recall</li>
+                    <li>Scales to huge histories</li>
+                    <li>Finds semantically related</li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ff6b6b;">Cons</h4>
+                <ul>
+                    <li>Retrieval isn't perfect</li>
+                    <li>Might miss relevant info</li>
+                    <li>Embedding cost adds up</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+</section>
+
+<!-- Part 7: Knowledge Graphs -->
+<section>
+    <section>
+        <h2>Strategy 4: Knowledge Graphs</h2>
+        <p>Structured facts, not bags of text</p>
+    </section>
+
+    <section>
+        <h3>RAG Limitation</h3>
+        <p>RAG treats memories as <span class="highlight">unstructured text blobs</span>.</p>
+        <p class="fragment">But sometimes you want <span class="highlight">structured relationships</span>.</p>
+    </section>
+
+    <section>
+        <h3>Knowledge Graph = Entities + Relationships</h3>
+        <pre><code class="language-plaintext">[Player: Aldric] --has_item--> [Key: Rusty Iron Key]
+[Key: Rusty Iron Key] --found_in--> [Location: Cellar]
+[Location: Cellar] --part_of--> [Location: Tavern]
+[NPC: Marta] --owns--> [Location: Tavern]
+</code></pre>
+        <p class="fragment">Triples: <code>(subject, predicate, object)</code></p>
+    </section>
+
+    <section>
+        <h3>Simple Implementation</h3>
+        <pre class="small-code"><code class="language-python">class KnowledgeGraph:
+    def __init__(self, db_path: str = "knowledge.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS triples (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                UNIQUE(session_id, subject, predicate, object)
+            )
+        """)
+
+    def add(self, session_id: str, subject: str, predicate: str, obj: str):
+        self.conn.execute(
+            """INSERT OR REPLACE INTO triples
+               (session_id, subject, predicate, object, timestamp)
+               VALUES (?, ?, ?, ?, ?)""",
+            (session_id, subject, predicate, obj, time.time())
+        )
+        self.conn.commit()
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Querying the Graph</h3>
+        <pre class="small-code"><code class="language-python">def query(
+    self,
+    session_id: str,
+    subject: str = None,
+    predicate: str = None,
+    obj: str = None
+) -> list[tuple]:
+    """Find triples matching the pattern (None = wildcard)."""
+    sql = "SELECT subject, predicate, object FROM triples WHERE session_id = ?"
+    params = [session_id]
+
+    if subject:
+        sql += " AND subject = ?"
+        params.append(subject)
+    if predicate:
+        sql += " AND predicate = ?"
+        params.append(predicate)
+    if obj:
+        sql += " AND object = ?"
+        params.append(obj)
+
+    return self.conn.execute(sql, params).fetchall()
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Example Queries</h3>
+        <pre><code class="language-python">kg = KnowledgeGraph()
+
+# What items does Aldric have?
+kg.query(session_id, subject="Aldric", predicate="has_item")
+# → [("Aldric", "has_item", "Rusty Key"),
+#    ("Aldric", "has_item", "Torch")]
+
+# Where was the key found?
+kg.query(session_id, subject="Rusty Key", predicate="found_in")
+# → [("Rusty Key", "found_in", "Cellar")]
+
+# What's in the cellar?
+kg.query(session_id, predicate="found_in", obj="Cellar")
+# → [("Rusty Key", "found_in", "Cellar"),
+#    ("Old Barrel", "found_in", "Cellar")]
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Extracting Facts with LLM</h3>
+        <pre class="small-code"><code class="language-python">async def extract_facts(narrative: str, llm) -> list[tuple]:
+    """Ask LLM to extract structured facts from narrative text."""
+
+    response = await llm.ainvoke([HumanMessage(content=f"""
+Extract factual relationships from this text.
+Return as JSON list of [subject, predicate, object] triples.
+
+Text: {narrative}
+
+Example output:
+[
+  ["player", "found", "rusty key"],
+  ["rusty key", "located_in", "cellar"]
+]
+""")])
+
+    return json.loads(response.content)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Using It</h3>
+        <pre class="small-code"><code class="language-python"># After GM narrates something:
+narrative = """You descend into the cellar and find a rusty iron key
+hidden behind a barrel. The key bears the crest of House Valdric."""
+
+facts = await extract_facts(narrative, llm)
+# → [["player", "found", "rusty iron key"],
+#    ["rusty iron key", "hidden_behind", "barrel"],
+#    ["rusty iron key", "bears_crest", "House Valdric"],
+#    ["barrel", "located_in", "cellar"]]
+
+for subject, predicate, obj in facts:
+    kg.add(session_id, subject, predicate, obj)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Answering Questions with KG</h3>
+        <pre class="small-code"><code class="language-python">async def answer_with_knowledge(question: str, session_id: str, kg, llm):
+    # 1. Extract what entities the question is about
+    entities_response = await llm.ainvoke([HumanMessage(
+        content=f"What entities/nouns is this question about? Return JSON list.\n{question}"
+    )])
+    entities = json.loads(entities_response.content)
+
+    # 2. Query knowledge graph for relevant facts
+    facts = []
+    for entity in entities:
+        facts.extend(kg.query(session_id, subject=entity))
+        facts.extend(kg.query(session_id, obj=entity))
+
+    # 3. Answer using retrieved facts
+    return await llm.ainvoke([HumanMessage(content=f"""
+Known facts:
+{json.dumps(facts, indent=2)}
+
+Question: {question}
+""")])
+</code></pre>
+    </section>
+
+    <section>
+        <h3>KG + RAG: Best of Both</h3>
+        <pre><code class="language-python">def build_context(self, query: str, session_id: str):
+    # Structured facts from knowledge graph
+    kg_facts = self.get_relevant_facts(query, session_id)
+
+    # Unstructured memories from RAG
+    rag_memories = self.memory_store.search(query, session_id)
+
+    return f"""
+## Known Facts
+{format_facts(kg_facts)}
+
+## Relevant Memories
+{format_memories(rag_memories)}
+"""
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Knowledge Graphs: The Tradeoff</h3>
+        <div class="two-col">
+            <div>
+                <h4 style="color: #4ecdc4;">Pros</h4>
+                <ul>
+                    <li>Precise queries</li>
+                    <li>Can update/correct facts</li>
+                    <li>Explicit relationships</li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ff6b6b;">Cons</h4>
+                <ul>
+                    <li>Extraction is hard</li>
+                    <li>Schema design is tricky</li>
+                    <li>LLMs make mistakes</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+</section>
+
+<!-- Part 8: MemGPT / Letta -->
+<section>
+    <section>
+        <h2>Strategy 5: Let the LLM Manage It</h2>
+        <p>The MemGPT / Letta approach</p>
+    </section>
+
+    <section>
+        <h3>The Meta-Cognitive Approach</h3>
+        <blockquote>
+            What if the LLM <strong>decides</strong> what to remember?
+        </blockquote>
+        <p class="fragment">Give the LLM <span class="highlight">tools for memory management</span>.</p>
+        <p class="fragment">It reasons about what's worth keeping.</p>
+    </section>
+
+    <section>
+        <h3>Two Memory Systems</h3>
+        <ul>
+            <li><strong>Core Memory</strong> — Always in context. Critical facts only.</li>
+            <li class="fragment"><strong>Archival Memory</strong> — Searchable storage. Everything else.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h3>Memory Management Tools</h3>
+        <pre class="small-code"><code class="language-python">@mcp.tool
+def core_memory_append(content: str) -> str:
+    """
+    Add important information to your core memory.
+    Core memory is ALWAYS in your context window.
+    Use for: user preferences, critical facts, ongoing goals.
+    """
+    with open(f"core_memory_{session_id}.txt", "a") as f:
+        f.write(content + "\n")
+    return f"Added to core memory: {content}"
+
+@mcp.tool
+def core_memory_replace(old: str, new: str) -> str:
+    """
+    Update information in core memory.
+    Use when facts change or you learn something more accurate.
+    """
+    path = f"core_memory_{session_id}.txt"
+    content = open(path).read().replace(old, new)
+    open(path, "w").write(content)
+    return f"Updated: {old} → {new}"
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Archival Memory Tools</h3>
+        <pre class="small-code"><code class="language-python">@mcp.tool
+def archival_memory_insert(content: str) -> str:
+    """
+    Store information in archival memory for later retrieval.
+    Archival memory is searchable but not always in context.
+    Use for: conversation details, historical events, reference info.
+    """
+    memory_store.add(session_id, content)
+    return f"Archived: {content}"
+
+@mcp.tool
+def archival_memory_search(query: str) -> list[str]:
+    """
+    Search your archival memory.
+    Use when you need to recall past events or information.
+    """
+    return memory_store.search(query, session_id, top_k=5)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>The System Prompt</h3>
+        <pre class="tiny-code"><code class="language-python">LETTA_SYSTEM_PROMPT = """You have limited memory. Your context window will fill up.
+
+You have two memory systems:
+1. CORE MEMORY - Always visible in your context. For critical, persistent facts.
+2. ARCHIVAL MEMORY - Searchable storage. For everything else.
+
+IMPORTANT: Proactively manage your memory!
+- When you learn something important, add it to core memory.
+- When context gets long, archive older details.
+- When you need to recall something, search archival memory.
+- When facts change, update core memory.
+
+You will LOSE information if you don't actively save it.
+
+## Your Core Memory:
+{core_memory_contents}
+
+## Current Conversation:
+"""
+</code></pre>
+    </section>
+
+    <section>
+        <h3>The Agent Loop</h3>
+        <pre class="small-code"><code class="language-python">class LettaStyleAgent:
+    async def chat(self, message: str) -> str:
+        # Core memory is always loaded into context
+        core_memory = open(f"core_memory_{self.session_id}.txt").read()
+
+        # Build prompt with core memory visible
+        system = LETTA_SYSTEM_PROMPT.format(
+            core_memory_contents=core_memory
+        )
+
+        # Agent has access to memory management tools
+        response = await self.agent.ainvoke(
+            {"messages": [SystemMessage(content=system),
+                         HumanMessage(content=message)]},
+            tools=[
+                core_memory_append,
+                core_memory_replace,
+                archival_memory_insert,
+                archival_memory_search,
+            ]
+        )
+        return response
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Example: LLM Managing Memory</h3>
+        <pre class="tiny-code"><code class="language-plaintext">User: My character's name is Aldric, a wandering bard.
+
+LLM thinking: "This is important - I should remember the character name."
+
+LLM calls: core_memory_append("Player's character: Aldric, a wandering bard")
+
+LLM responds: "Welcome, Aldric! A bard's life is one of adventure and song..."
+
+---
+
+[50 turns later]
+
+User: What was that innkeeper's name again?
+
+LLM thinking: "I don't remember. Let me search my archives."
+
+LLM calls: archival_memory_search("innkeeper name tavern")
+
+LLM receives: ["Turn 12: Met Marta, the innkeeper of the Rusty Flagon..."]
+
+LLM responds: "The innkeeper's name is Marta. She runs the Rusty Flagon."
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Key Insight</h3>
+        <blockquote>
+            The LLM is reasoning about <strong>what to remember</strong>,<br>
+            not just <strong>what to say</strong>.
+        </blockquote>
+    </section>
+
+    <section>
+        <h3>MemGPT/Letta: The Tradeoff</h3>
+        <div class="two-col">
+            <div>
+                <h4 style="color: #4ecdc4;">Pros</h4>
+                <ul>
+                    <li>Flexible, adaptive</li>
+                    <li>LLM prioritizes what matters</li>
+                    <li>Self-organizing</li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ff6b6b;">Cons</h4>
+                <ul>
+                    <li>Complex to implement</li>
+                    <li>LLM might forget to save</li>
+                    <li>Higher token cost</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+</section>
+
+<!-- Part 9: Comparison -->
+<section>
+    <section>
+        <h2>Comparison</h2>
+    </section>
+
+    <section>
+        <h3>Strategy Comparison</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Strategy</th>
+                    <th>Complexity</th>
+                    <th>Fidelity</th>
+                    <th>Cost</th>
+                    <th>Best For</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Sliding Window</td>
+                    <td>Trivial</td>
+                    <td>Poor</td>
+                    <td>Low</td>
+                    <td>Stateless chat</td>
+                </tr>
+                <tr>
+                    <td>Summarization</td>
+                    <td>Low</td>
+                    <td>Medium</td>
+                    <td>Medium</td>
+                    <td>Simple continuity</td>
+                </tr>
+                <tr>
+                    <td>RAG</td>
+                    <td>Medium</td>
+                    <td>Good</td>
+                    <td>Medium</td>
+                    <td>Long histories</td>
+                </tr>
+                <tr>
+                    <td>Knowledge Graph</td>
+                    <td>High</td>
+                    <td>Excellent</td>
+                    <td>High</td>
+                    <td>Fact-heavy domains</td>
+                </tr>
+                <tr>
+                    <td>MemGPT/Letta</td>
+                    <td>High</td>
+                    <td>Flexible</td>
+                    <td>High</td>
+                    <td>Open-ended agents</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h3>Combining Strategies</h3>
+        <pre><code class="language-python">class HybridMemoryAgent:
+    def build_context(self, query: str, session_id: str):
+        # Recent messages (sliding window)
+        recent = self.message_store.get_recent(session_id, n=10)
+
+        # Summary of older history
+        summary = self.get_latest_summary(session_id)
+
+        # RAG for specific recall
+        relevant = self.vector_store.search(query, session_id)
+
+        # Knowledge graph for facts
+        facts = self.kg.get_relevant_facts(query, session_id)
+
+        return combine_all(summary, facts, relevant, recent)
+</code></pre>
+    </section>
+</section>
+
+<!-- Part 10: Real Implementations -->
+<section>
+    <section>
+        <h2>Real Implementations</h2>
+        <p>Libraries you can use today</p>
+    </section>
+
+    <section>
+        <h3>LangGraph Checkpointing</h3>
+        <p>Built-in persistence for conversation state</p>
+        <pre><code class="language-python">from langgraph.checkpoint.sqlite import SqliteSaver
+
+memory = SqliteSaver.from_conn_string(":memory:")
+
+agent = create_react_agent(
+    model=model,
+    tools=tools,
+    checkpointer=memory,  # ← Adds persistence!
+)
+
+# Each thread_id gets its own conversation history
+config = {"configurable": {"thread_id": "session-123"}}
+response = await agent.ainvoke({"messages": [...]}, config)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Mem0</h3>
+        <p>Memory-as-a-service: extraction + retrieval</p>
+        <pre><code class="language-python">from mem0 import Memory
+
+m = Memory()
+
+# Add memories (auto-extracts facts)
+m.add("Player found a rusty key in the cellar", user_id="session-123")
+
+# Search memories
+results = m.search("What did the player find?", user_id="session-123")
+</code></pre>
+        <p style="font-size: 0.7em;"><a href="https://docs.mem0.ai">docs.mem0.ai</a></p>
+    </section>
+
+    <section>
+        <h3>Zep</h3>
+        <p>Memory with knowledge graph features</p>
+        <pre><code class="language-python">from zep_cloud.client import Zep
+
+client = Zep(api_key=API_KEY)
+
+# Add message to session
+await client.memory.add(
+    session_id="session-123",
+    messages=[Message(role="user", content="...")]
+)
+
+# Search with hybrid retrieval
+results = await client.memory.search(
+    session_id="session-123",
+    text="rusty key"
+)
+</code></pre>
+        <p style="font-size: 0.7em;"><a href="https://docs.getzep.com">docs.getzep.com</a></p>
+    </section>
+
+    <section>
+        <h3>Letta</h3>
+        <p>Full MemGPT implementation</p>
+        <pre><code class="language-python">from letta import create_client
+
+client = create_client()
+
+agent = client.create_agent(
+    name="dungeon-master",
+    memory_blocks=[
+        {"label": "persona", "value": "You are a dramatic GM..."},
+        {"label": "player_info", "value": ""},
+    ],
+)
+
+# Agent manages its own memory via tools
+response = client.send_message(
+    agent_id=agent.id,
+    message="My character is Aldric the bard"
+)
+</code></pre>
+        <p style="font-size: 0.7em;"><a href="https://docs.letta.com">docs.letta.com</a></p>
+    </section>
+</section>
+
+<!-- Part 11: Exercise -->
+<section>
+    <section>
+        <h2>Exercise</h2>
+        <p>Add memory to your llmud GM agent</p>
+    </section>
+
+    <section>
+        <h3>Option 1: Simple (LangGraph Checkpointing)</h3>
+        <ol>
+            <li>Add <code>SqliteSaver</code> to your agent</li>
+            <li>Pass <code>thread_id</code> in config</li>
+            <li>Test: play, restart, continue</li>
+        </ol>
+        <pre><code class="language-python">from langgraph.checkpoint.sqlite import SqliteSaver
+
+checkpointer = SqliteSaver.from_conn_string("game_state.db")
+
+self.agent = create_react_agent(
+    model=self.model,
+    tools=tools,
+    prompt=SYSTEM_PROMPT,
+    checkpointer=checkpointer,
+)
+</code></pre>
+    </section>
+
+    <section>
+        <h3>Option 2: Medium (RAG with sqlite-vec)</h3>
+        <ol>
+            <li>Create <code>VectorMemoryStore</code> class</li>
+            <li>Store each message with embedding</li>
+            <li>Retrieve relevant memories before each response</li>
+            <li>Inject into context</li>
+        </ol>
+    </section>
+
+    <section>
+        <h3>Option 3: Advanced (Letta-style)</h3>
+        <ol>
+            <li>Create memory management MCP tools</li>
+            <li>Add them to your server</li>
+            <li>Update system prompt to instruct memory management</li>
+            <li>Test: does the GM proactively save important info?</li>
+        </ol>
+    </section>
+</section>
+
+<!-- Part 12: Readings -->
+<section>
+    <section>
+        <h2>Readings</h2>
+    </section>
+
+    <section>
+        <h3>Papers</h3>
+        <ul>
+            <li><strong>MemGPT</strong>: "MemGPT: Towards LLMs as Operating Systems"<br>
+                <span class="dim">Packer et al., 2023</span></li>
+            <li class="fragment"><strong>Generative Agents</strong>: "Generative Agents: Interactive Simulacra of Human Behavior"<br>
+                <span class="dim">Park et al., 2023 (Stanford "AI Town")</span></li>
+            <li class="fragment"><strong>RAG</strong>: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"<br>
+                <span class="dim">Lewis et al., 2020</span></li>
+        </ul>
+    </section>
+
+    <section>
+        <h3>Documentation</h3>
+        <ul>
+            <li><a href="https://docs.letta.com">docs.letta.com</a> — Letta (MemGPT)</li>
+            <li><a href="https://docs.mem0.ai">docs.mem0.ai</a> — Mem0</li>
+            <li><a href="https://docs.getzep.com">docs.getzep.com</a> — Zep</li>
+            <li><a href="https://langchain-ai.github.io/langgraph/concepts/persistence/">LangGraph Persistence</a></li>
+            <li><a href="https://alexgarcia.xyz/sqlite-vec/">sqlite-vec</a></li>
+        </ul>
+    </section>
+
+    <section>
+        <h3>llmud Repository</h3>
+        <p><a href="https://github.com/jakemannix/llmud">github.com/jakemannix/llmud</a></p>
+        <ul>
+            <li><code>web_client/agent.py</code> — Current agent (no memory)</li>
+            <li><code>rpg-dm-tools/</code> — MCP server you built</li>
+        </ul>
+    </section>
+</section>
+
+<!-- End -->
+<section>
+    <h2>Questions?</h2>
+    <p style="margin-top: 2em;">
+        <a href="https://github.com/jakemannix/llmud">github.com/jakemannix/llmud</a>
+    </p>
+</section>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.5.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.5.0/plugin/highlight/highlight.js"></script>
+<script>
+    Reveal.initialize({
+        hash: true,
+        slideNumber: true,
+        plugins: [RevealHighlight]
+    });
+</script>
+</body>
+</html>
