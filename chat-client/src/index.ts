@@ -3,6 +3,16 @@ import chalk from "chalk";
 import { connectToMcpServer, loadMcpToolsAsLangChainTools } from "./mcp-tools.js";
 import { createGameAgent, type ModelProvider, type DebugCallbacks } from "./agent.js";
 
+// Suppress LangChain's token counting warnings for OpenRouter models
+const originalWarn = console.warn;
+console.warn = (...args: unknown[]) => {
+  const msg = args[0];
+  if (typeof msg === "string" && msg.includes("Failed to calculate number of tokens")) {
+    return; // Suppress this warning
+  }
+  originalWarn.apply(console, args);
+};
+
 const DEFAULT_SERVER_URL = "http://localhost:8000/mcp";
 
 function parseArgs(): { debug: boolean } {
@@ -17,13 +27,14 @@ function detectModelConfig(): { provider: ModelProvider; model?: string } {
   const explicitModel = process.env.LLM_MODEL;
 
   // If provider explicitly set, use it
-  if (explicitProvider === "anthropic" || explicitProvider === "openai") {
+  if (explicitProvider === "anthropic" || explicitProvider === "openai" || explicitProvider === "openrouter") {
     return { provider: explicitProvider, model: explicitModel };
   }
 
   // Auto-detect based on available API keys
   const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY;
 
   if (hasAnthropic && !hasOpenAI) {
     return { provider: "anthropic", model: explicitModel };
@@ -31,11 +42,13 @@ function detectModelConfig(): { provider: ModelProvider; model?: string } {
   if (hasOpenAI && !hasAnthropic) {
     return { provider: "openai", model: explicitModel };
   }
-  if (hasAnthropic && hasOpenAI) {
+  if (hasOpenRouter && !hasAnthropic && !hasOpenAI) {
+    return { provider: "openrouter", model: explicitModel };
+  }
+  if (hasAnthropic && hasOpenAI && hasOpenRouter) {
     // Default to Anthropic when both available
     return { provider: "anthropic", model: explicitModel };
   }
-
   // Neither key set
   return { provider: "openai", model: explicitModel };
 }
@@ -91,7 +104,8 @@ async function main() {
   // Check for API key
   const hasValidKey =
     (modelConfig.provider === "openai" && process.env.OPENAI_API_KEY) ||
-    (modelConfig.provider === "anthropic" && process.env.ANTHROPIC_API_KEY);
+    (modelConfig.provider === "anthropic" && process.env.ANTHROPIC_API_KEY) ||
+    (modelConfig.provider === "openrouter" && process.env.OPENROUTER_API_KEY);
 
   if (!hasValidKey) {
     console.log(chalk.red("Error: No API key found for the selected provider"));
@@ -105,7 +119,9 @@ async function main() {
     process.exit(1);
   }
 
-  const modelName = modelConfig.model || (modelConfig.provider === "anthropic" ? "claude-sonnet-4-20250514" : "gpt-4o");
+  const modelName = modelConfig.model || 
+    (modelConfig.provider === "anthropic" ? "claude-sonnet-4-20250514" : 
+     modelConfig.provider === "openrouter" ? "openai/gpt-oss-20b:free" : "gpt-4o");
   console.log(chalk.gray(`Using ${modelConfig.provider} model: ${modelName}`));
   console.log(chalk.gray(`Connecting to MCP server at ${serverUrl}...`));
 
@@ -203,6 +219,7 @@ async function main() {
     console.log();
   } catch (error) {
     console.log(chalk.yellow("Could not generate initial greeting, but you can still chat!"));
+    console.log(chalk.red("Error details:"), (error as Error).message || error);
     console.log();
   }
 

@@ -49,7 +49,7 @@ Use the lookup tools to reference lore and keep the world consistent.
 When combat happens, use roll_dice and describe the action cinematically."""
 
 
-ModelProvider = Literal["openai", "anthropic"]
+ModelProvider = Literal["openai", "anthropic", "openrouter"]
 
 
 @dataclass
@@ -75,6 +75,15 @@ def create_model(provider: ModelProvider, model_name: str | None = None):
             model=model_name or "claude-sonnet-4-20250514",
             temperature=0.7,
         )
+    elif provider == "openrouter":
+        import os
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model_name or "xiaomi/mimo-v2-flash:free",
+            temperature=0.7,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+        )
     else:
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
@@ -88,18 +97,23 @@ def detect_provider() -> tuple[ModelProvider, str | None]:
     explicit_provider = os.environ.get("LLM_PROVIDER", "").lower()
     explicit_model = os.environ.get("LLM_MODEL")
     
-    if explicit_provider in ("anthropic", "openai"):
+    if explicit_provider in ("anthropic", "openai", "openrouter"):
         return explicit_provider, explicit_model  # type: ignore
     
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+    has_openrouter = bool(os.environ.get("OPENROUTER_API_KEY"))
     
-    if has_anthropic and not has_openai:
+    if has_anthropic and not has_openai and not has_openrouter:
         return "anthropic", explicit_model
-    if has_openai and not has_anthropic:
+    if has_openai and not has_anthropic and not has_openrouter:
         return "openai", explicit_model
-    if has_anthropic and has_openai:
-        return "anthropic", explicit_model  # Default to Anthropic
+    if has_openrouter and not has_anthropic and not has_openai:
+        return "openrouter", explicit_model
+    if has_anthropic:
+        return "anthropic", explicit_model  # Default to Anthropic if multiple keys present
+    if has_openrouter:
+        return "openrouter", explicit_model  # Prefer OpenRouter over OpenAI
     
     return "openai", explicit_model
 

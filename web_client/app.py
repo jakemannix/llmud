@@ -689,9 +689,9 @@ def main():
     args = parser.parse_args()
     
     # Check for API keys
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY") and not os.environ.get("OPENROUTER_API_KEY"):
         print("Error: No API key found.")
-        print("Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable.")
+        print("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY environment variable.")
         return
     
     mcp_url_global = args.mcp_url

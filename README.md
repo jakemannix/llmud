@@ -85,6 +85,10 @@ npm run dev
 export OPENAI_API_KEY=your-key-here
 npm run dev
 
+# Or use OpenRouter
+export OPENROUTER_API_KEY=your-key-here
+npm run dev
+
 # Enable debug mode to see tool calls
 npm run dev:debug
 ```
@@ -110,10 +114,20 @@ Shows:
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic API key (uses Claude) |
 | `OPENAI_API_KEY` | OpenAI API key (uses GPT-4o) |
-| `LLM_PROVIDER` | Force provider: `anthropic` or `openai` |
+| `OPENROUTER_API_KEY` | OpenRouter API key (access to many models) |
+| `LLM_PROVIDER` | Force provider: `anthropic`, `openai`, or `openrouter` |
 | `LLM_MODEL` | Specific model name (e.g., `claude-sonnet-4-20250514`, `gpt-4o-mini`) |
+| `DEBUG_AGENT` | Set to `true` for verbose agent debugging (API calls, streaming, message parsing) |
 
-When both API keys are set, Anthropic is used by default.
+When multiple API keys are set, priority is: Anthropic > OpenAI > OpenRouter.
+
+#### OpenRouter Example
+
+```bash
+export OPENROUTER_API_KEY=your-key-here
+export LLM_MODEL=google/gemini-2.0-flash-001  # or any OpenRouter model
+npm run dev
+```
 
 ## Web Client (FastHTML)
 
