@@ -11,6 +11,11 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
 ]
 
+[project.optional-dependencies]
+modal = [
+    "modal>=0.67.0",
+]
+
 [project.scripts]
 backstabbr-mcp = "backstabbr_mcp.server:main"
 
