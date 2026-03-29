@@ -189,6 +189,54 @@ async def game_url(slug: str, game_id: str,
     return url
 
 
+@mcp.tool()
+async def debug_page(path: str) -> str:
+    """Fetch a raw Backstabbr page and return a summary of its HTML structure.
+
+    Useful for reverse-engineering the site when parsers break. Returns the
+    page's tag structure, CSS classes, and any embedded JavaScript variables.
+
+    Args:
+        path: URL path to fetch (e.g. "/game/My-Game/12345" or "/sandbox/12345")
+    """
+    client = _get_client()
+    soup = await client._get(path)
+
+    lines = ["## Page structure", ""]
+
+    # Title
+    title = soup.select_one("title")
+    if title:
+        lines.append(f"**Title**: {title.get_text(strip=True)}")
+
+    # Summarize top-level structure
+    lines.append("")
+    lines.append("### Key elements (class names)")
+    seen_classes: set[str] = set()
+    for el in soup.select("[class]"):
+        classes = " ".join(el.get("class", []))
+        if classes and classes not in seen_classes:
+            seen_classes.add(classes)
+            text_preview = el.get_text(strip=True)[:80]
+            if text_preview:
+                lines.append(f"- `<{el.name} class=\"{classes}\">` — {text_preview}")
+    # Cap output
+    if len(lines) > 100:
+        lines = lines[:100]
+        lines.append("... (truncated)")
+
+    # Embedded JS variables
+    js_state = client._parse_js_game_state(soup)
+    if js_state:
+        lines.append("")
+        lines.append("### Embedded JS variables")
+        for k, v in js_state.items():
+            preview = v[:200] if len(v) > 200 else v
+            lines.append(f"- `{k}` = {preview}")
+
+    return "\n".join(lines)
+
+
 def main() -> None:
     """Entry point for the backstabbr-mcp server."""
     mcp.run()

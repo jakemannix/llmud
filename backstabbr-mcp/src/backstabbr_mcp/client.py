@@ -3,8 +3,24 @@
 Backstabbr has no official API. This module reverse-engineers the web interface
 by making authenticated HTTP requests and parsing the HTML responses.
 
-Authentication uses Firebase (Google accounts) with session cookies.
-Game URLs follow the pattern: /game/{name}/{id}/{year}/{season}
+Architecture notes (from reverse engineering):
+- Backend: Python/Django on Google App Engine
+- Auth: Firebase (Google accounts), project "tilegames2", auth domain "auth.backstabbr.com"
+- Session: cookie named "session"
+- Game URLs: /game/{slug}/{id}/{year}/{season}
+- Sandbox URLs: /sandbox/{slug}/{id}
+- IDs: Large numeric GAE datastore keys (e.g. 6203000050155520)
+
+The app is server-rendered (not a SPA). Game state is embedded in the HTML as
+JavaScript variables (stage, orders, unit positions, territory control, etc.).
+The map is SVG rendered client-side via JS.
+
+Known HTML structure (from backstabbr_api project, may be outdated):
+- Player list: <tr class="playerlist"> with <div class="country">
+- Order status icons: <i class="fas fa-clock text-info"> (pending), fa-check (submitted)
+- Supply centers: <div class="legend">
+- Press threads: <div class="press-thread-body">
+- Press messages: author in <em>, body in <p class="body">
 """
 
 from __future__ import annotations
@@ -165,18 +181,30 @@ class BackstabbrClient:
         )
 
     def _parse_countries(self, soup: BeautifulSoup) -> list[Country]:
-        """Extract country information from the game page HTML."""
+        """Extract country information from the game page HTML.
+
+        Backstabbr uses two main HTML structures for country data:
+        1. Player list: <tr class="playerlist"> rows with <div class="country">
+           and status icons (fa-clock = pending, fa-check = submitted)
+        2. Legend: <div class="legend"> with supply center counts
+
+        These selectors are based on the backstabbr_api project (2021) and may
+        need updating if the HTML structure has changed.
+        """
         countries: list[Country] = []
+        seen_countries: set[str] = set()
 
-        # Backstabbr renders a legend/sidebar with country info
-        # Look for player list elements with country names and status
-        for el in soup.select("[class*='player'], [class*='country'], [class*='legend']"):
-            text = el.get_text(strip=True)
-            if not text:
+        country_names = {
+            "austria", "england", "france", "germany", "italy", "russia", "turkey"
+        }
+
+        # Strategy 1: Parse playerlist rows (order status + country names)
+        for row in soup.select("tr.playerlist"):
+            country_el = row.select_one("div.country, .country")
+            if not country_el:
                 continue
+            text = country_el.get_text(strip=True)
 
-            # Try to extract country name and supply center count
-            # Patterns vary, this handles common cases
             name_match = re.search(
                 r"(Austria|England|France|Germany|Italy|Russia|Turkey)", text, re.IGNORECASE
             )
@@ -184,22 +212,99 @@ class BackstabbrClient:
                 continue
 
             country_name = name_match.group(1).title()
-            sc_match = re.search(r"(\d+)\s*(?:SC|supply|center)", text, re.IGNORECASE)
-            sc_count = int(sc_match.group(1)) if sc_match else 0
+            if country_name.lower() in seen_countries:
+                continue
+            seen_countries.add(country_name.lower())
 
+            # Determine order status from icons in the row
             status = OrderStatus.NOT_SUBMITTED
-            if "submitted" in text.lower():
+            if row.select_one("i.fa-check, i.fa-check-circle"):
                 status = OrderStatus.SUBMITTED
-            elif "eliminated" in text.lower() or "defeated" in text.lower():
+            elif row.select_one("i.fa-skull, i.fa-times"):
                 status = OrderStatus.ELIMINATED
+            # fa-clock = not yet submitted (default)
 
             countries.append(Country(
                 name=country_name,
-                supply_centers=sc_count,
+                supply_centers=0,
                 order_status=status,
             ))
 
+        # Strategy 2: Parse legend for supply center counts
+        for legend_el in soup.select("div.legend, .legend"):
+            text = legend_el.get_text(strip=True)
+            name_match = re.search(
+                r"(Austria|England|France|Germany|Italy|Russia|Turkey)", text, re.IGNORECASE
+            )
+            if not name_match:
+                continue
+            country_name = name_match.group(1).title()
+            sc_match = re.search(r"(\d+)", text)
+            if sc_match:
+                sc_count = int(sc_match.group(1))
+                # Update existing country entry or create new one
+                for c in countries:
+                    if c.name == country_name:
+                        c.supply_centers = sc_count
+                        break
+                else:
+                    countries.append(Country(
+                        name=country_name,
+                        supply_centers=sc_count,
+                    ))
+
+        # Strategy 3: Fallback — broad search if nothing found yet
+        if not countries:
+            for el in soup.select("[class*='player'], [class*='country'], [class*='legend']"):
+                text = el.get_text(strip=True)
+                if not text:
+                    continue
+                name_match = re.search(
+                    r"(Austria|England|France|Germany|Italy|Russia|Turkey)", text, re.IGNORECASE
+                )
+                if not name_match:
+                    continue
+                country_name = name_match.group(1).title()
+                if country_name.lower() in seen_countries:
+                    continue
+                seen_countries.add(country_name.lower())
+
+                sc_match = re.search(r"(\d+)\s*(?:SC|supply|center)", text, re.IGNORECASE)
+                sc_count = int(sc_match.group(1)) if sc_match else 0
+
+                status = OrderStatus.NOT_SUBMITTED
+                if "submitted" in text.lower():
+                    status = OrderStatus.SUBMITTED
+                elif "eliminated" in text.lower() or "defeated" in text.lower():
+                    status = OrderStatus.ELIMINATED
+
+                countries.append(Country(
+                    name=country_name,
+                    supply_centers=sc_count,
+                    order_status=status,
+                ))
+
         return countries
+
+    def _parse_js_game_state(self, soup: BeautifulSoup) -> dict:
+        """Extract game state from embedded JavaScript variables.
+
+        Backstabbr embeds game data as JS variables in <script> tags:
+        stage, orders, unit positions, territory control, base_url, gameType.
+        This is more reliable than parsing HTML elements when available.
+        """
+        state: dict = {}
+        for script in soup.select("script"):
+            text = script.string or ""
+            # Look for variable assignments like: var orders = {...};
+            for var_name in ("stage", "orders", "gameType", "base_url"):
+                match = re.search(
+                    rf"(?:var|let|const)\s+{var_name}\s*=\s*(.+?);\s*$",
+                    text, re.MULTILINE
+                )
+                if match:
+                    state[var_name] = match.group(1).strip()
+        return state
 
     # ── Press / messaging ─────────────────────────────────────────────
 
@@ -224,32 +329,64 @@ class BackstabbrClient:
 
     async def get_press_thread(self, slug: str, game_id: str,
                                thread_id: str) -> list[PressMessage]:
-        """Fetch messages in a press thread."""
+        """Fetch messages in a press thread.
+
+        Known HTML structure (may be outdated):
+        - Thread container: <div class="press-thread-body">
+        - Author: <em> tag within message
+        - Body: <p class="body">
+        """
         path = f"/game/{slug}/{game_id}/pressthread/{thread_id}"
         soup = await self._get(path)
         messages: list[PressMessage] = []
 
-        for msg_el in soup.select("[class*='message'], [class*='press']"):
+        # Strategy 1: Known structure — press-thread-body divs
+        for msg_el in soup.select("div.press-thread-body, [class*='press-thread']"):
             author = ""
             date = ""
             body = ""
 
-            author_el = msg_el.select_one("[class*='author'], [class*='sender']")
+            # Author is typically in an <em> tag
+            author_el = msg_el.select_one("em")
             if author_el:
                 author = author_el.get_text(strip=True)
 
-            date_el = msg_el.select_one("[class*='date'], [class*='time']")
+            # Body in <p class="body"> or similar
+            body_el = msg_el.select_one("p.body, [class*='body']")
+            if body_el:
+                body = body_el.get_text(strip=True)
+
+            # Date from any time/date element
+            date_el = msg_el.select_one("[class*='date'], time, [class*='time']")
             if date_el:
                 date = date_el.get_text(strip=True)
 
-            body_el = msg_el.select_one("[class*='body'], [class*='content']")
-            if body_el:
-                body = body_el.get_text(strip=True)
-            elif not author_el:
-                body = msg_el.get_text(strip=True)
-
             if body:
                 messages.append(PressMessage(author=author, date=date, body=body))
+
+        # Strategy 2: Fallback — broader search
+        if not messages:
+            for msg_el in soup.select("[class*='message'], [class*='press']"):
+                author = ""
+                date = ""
+                body = ""
+
+                author_el = msg_el.select_one("[class*='author'], [class*='sender'], em")
+                if author_el:
+                    author = author_el.get_text(strip=True)
+
+                date_el = msg_el.select_one("[class*='date'], [class*='time']")
+                if date_el:
+                    date = date_el.get_text(strip=True)
+
+                body_el = msg_el.select_one("[class*='body'], [class*='content']")
+                if body_el:
+                    body = body_el.get_text(strip=True)
+                elif not author_el:
+                    body = msg_el.get_text(strip=True)
+
+                if body:
+                    messages.append(PressMessage(author=author, date=date, body=body))
 
         return messages
 
